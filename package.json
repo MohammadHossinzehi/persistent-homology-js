@@ -1,0 +1,17 @@
+{
+  "name": "persistent-homology-js",
+  "version": "1.0.0",
+  "description": "Persistent homology from scratch in JavaScript: Vietoris-Rips and lower-star filtrations, cohomology with clearing, bottleneck and Wasserstein distances, landscapes and persistence images. Zero dependencies.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": "./src/index.js",
+  "bin": { "ph": "bin/ph.js" },
+  "scripts": {
+    "test": "node --test",
+    "bench": "node bench/clearing.js",
+    "demo": "npx --yes http-server -c-1 -p 8080 ."
+  },
+  "engines": { "node": ">=18" },
+  "keywords": ["topological-data-analysis", "persistent-homology", "tda", "vietoris-rips", "bottleneck-distance", "persistence-landscape"],
+  "license": "MIT"
+}
