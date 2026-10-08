@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persistent homology playground</title>
+<style>
+  :root { --bg: #0f1115; --panel: #171a21; --ink: #e6e8ee; --muted: #8a92a6; --h0: #4cc2ff; --h1: #ff9f43; --edge: #4cc2ff55; --tri: #ff9f4322; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
+  header { padding: 16px 20px 0; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--muted); max-width: 70ch; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px 24px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border-radius: 10px; padding: 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  canvas { width: 100%; display: block; background: #0b0d11; border-radius: 6px; }
+  #space { aspect-ratio: 1 / 1; cursor: crosshair; }
+  #bars { aspect-ratio: 16 / 10; }
+  #diagram { aspect-ratio: 1 / 1; max-width: 360px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 0; }
+  button { background: #252a35; color: var(--ink); border: 1px solid #333a48; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button:hover { border-color: var(--h0); }
+  input[type=range] { flex: 1; min-width: 160px; }
+  .stat { font-variant-numeric: tabular-nums; }
+  .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Persistent homology playground</h1>
+  <p>Click to add points (shift click removes the nearest). Drag the scale slider to grow the Vietoris-Rips complex:
+    an edge appears when two points are within the scale, a triangle when all three edges are present.
+    Long bars in the barcode are features that survive across many scales.</p>
+</header>
+<main>
+  <section>
+    <h2>Point cloud and Rips complex</h2>
+    <canvas id="space" width="640" height="640"></canvas>
+    <div class="row">
+      <label for="eps">scale</label>
+      <input id="eps" type="range" min="0" max="1" step="0.001" value="0.25">
+      <span id="epsOut" class="stat"></span>
+    </div>
+    <div class="row">
+      <button data-sample="circle">circle</button>
+      <button data-sample="twoCircles">two circles</button>
+      <button data-sample="figureEight">figure eight</button>
+      <button data-sample="uniformBox">random</button>
+      <button id="clear">clear</button>
+    </div>
+    <p class="row stat" id="betti"></p>
+  </section>
+  <section>
+    <h2>Barcode <span class="legend"><span style="background:var(--h0)"></span>H0<span style="background:var(--h1)"></span>H1</span></h2>
+    <canvas id="bars" width="640" height="400"></canvas>
+    <h2 style="margin-top:14px">Persistence diagram</h2>
+    <canvas id="diagram" width="360" height="360"></canvas>
+    <p class="muted stat" id="info"></p>
+  </section>
+</main>
+<script type="module">
+import { rips, bettiNumbers, persistentEntropy, datasets } from '../src/index.js';
+
+const space = document.getElementById('space');
+const bars = document.getElementById('bars');
+const diag = document.getElementById('diagram');
+const slider = document.getElementById('eps');
+const css = getComputedStyle(document.documentElement);
+const color = (name) => css.getPropertyValue(name).trim();
+
+let points = [];
+let result = null;
+const SCALE_MAX = 1.0; // the canvas is the unit square
+
+function normalise(pts) {
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const s = 0.8 / Math.max(x1 - x0, y1 - y0, 1e-9);
+  return pts.map(([x, y]) => [0.1 + (x - x0) * s + (0.8 - (x1 - x0) * s) / 2, 0.1 + (y - y0) * s + (0.8 - (y1 - y0) * s) / 2]);
+}
+
+function load(name) {
+  const n = name === 'uniformBox' ? 40 : 48;
+  const raw = name === 'uniformBox' ? datasets.uniformBox(n, 2, { seed: Date.now() % 1000 })
+    : datasets[name](n, { noise: 0.04, seed: Date.now() % 1000 });
+  points = normalise(raw);
+  recompute();
+}
+
+function recompute() {
+  result = points.length ? rips(points, { maxDim: 1 }) : null;
+  draw();
+}
+
+function draw() {
+  const eps = Number(slider.value) * SCALE_MAX;
+  document.getElementById('epsOut').textContent = eps.toFixed(3);
+  drawSpace(eps);
+  drawBars(eps);
+  drawDiagram(eps);
+  const b = result ? bettiNumbers(result.diagrams, eps) : [0, 0];
+  document.getElementById('betti').textContent = `${points.length} points   β₀ = ${b[0]}   β₁ = ${b[1]}`;
+  document.getElementById('info').textContent = result
+    ? `${result.numSimplices} simplices, ${result.columnAdditions} column additions (${result.algorithm} + clearing), H1 entropy ${persistentEntropy(result.diagrams[1]).toFixed(3)}`
+    : '';
+}
+
+function drawSpace(eps) {
+  const ctx = space.getContext('2d');
+  const W = space.width;
+  ctx.clearRect(0, 0, W, W);
+  const P = points.map(([x, y]) => [x * W, (1 - y) * W]);
+  const d = (i, j) => Math.hypot(points[i][0] - points[j][0], points[i][1] - points[j][1]);
+  ctx.fillStyle = color('--tri');
+  for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+    if (d(i, j) > eps) continue;
+    for (let k = j + 1; k < P.length; k++) {
+      if (d(i, k) > eps || d(j, k) > eps) continue;
+      ctx.beginPath(); ctx.moveTo(...P[i]); ctx.lineTo(...P[j]); ctx.lineTo(...P[k]); ctx.fill();
+    }
+  }
+  ctx.strokeStyle = color('--edge');
+  ctx.lineWidth = 1;
+  for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+    if (d(i, j) <= eps) { ctx.beginPath(); ctx.moveTo(...P[i]); ctx.lineTo(...P[j]); ctx.stroke(); }
+  }
+  ctx.fillStyle = color('--ink');
+  for (const [x, y] of P) { ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 2 * Math.PI); ctx.fill(); }
+}
+
+function drawBars(eps) {
+  const ctx = bars.getContext('2d');
+  const { width: W, height: H } = bars;
+  ctx.clearRect(0, 0, W, H);
+  if (!result) return;
+  const all = [...result.diagrams[0].map((p) => [0, p]), ...result.diagrams[1].map((p) => [1, p])];
+  const rows = all.slice(0, 80);
+  const h = Math.min(10, (H - 20) / Math.max(1, rows.length));
+  const x = (t) => 10 + (Math.min(t, SCALE_MAX) / SCALE_MAX) * (W - 20);
+  rows.forEach(([k, p], i) => {
+    ctx.fillStyle = color(k === 0 ? '--h0' : '--h1');
+    ctx.fillRect(x(p.birth), 10 + i * h, Math.max(1, x(p.death) - x(p.birth)), Math.max(1, h - 2));
+  });
+  ctx.strokeStyle = color('--ink');
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(x(eps), 0); ctx.lineTo(x(eps), H); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawDiagram(eps) {
+  const ctx = diag.getContext('2d');
+  const W = diag.width;
+  ctx.clearRect(0, 0, W, W);
+  const pad = 24;
+  const s = (t) => pad + (Math.min(t, SCALE_MAX) / SCALE_MAX) * (W - 2 * pad);
+  ctx.strokeStyle = color('--muted');
+  ctx.beginPath(); ctx.moveTo(s(0), W - s(0)); ctx.lineTo(s(SCALE_MAX), W - s(SCALE_MAX)); ctx.stroke();
+  ctx.fillStyle = '#ffffff10';
+  ctx.fillRect(s(0), W - s(SCALE_MAX), s(eps) - s(0), s(SCALE_MAX) - s(eps)); // points alive at eps
+  if (!result) return;
+  result.diagrams.forEach((dgm, k) => {
+    ctx.fillStyle = color(k === 0 ? '--h0' : '--h1');
+    for (const p of dgm) {
+      ctx.beginPath();
+      ctx.arc(s(p.birth), W - s(p.death), p.death === Infinity ? 5 : 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  });
+  ctx.fillStyle = color('--muted');
+  ctx.fillText('birth', W - pad - 26, W - 6);
+  ctx.fillText('death', 4, pad - 8);
+}
+
+space.addEventListener('click', (e) => {
+  const r = space.getBoundingClientRect();
+  const p = [(e.clientX - r.left) / r.width, 1 - (e.clientY - r.top) / r.height];
+  if (e.shiftKey && points.length) {
+    let best = 0;
+    points.forEach((q, i) => { if (Math.hypot(q[0] - p[0], q[1] - p[1]) < Math.hypot(points[best][0] - p[0], points[best][1] - p[1])) best = i; });
+    points.splice(best, 1);
+  } else points.push(p);
+  recompute();
+});
+slider.addEventListener('input', draw);
+document.querySelectorAll('[data-sample]').forEach((b) => b.addEventListener('click', () => load(b.dataset.sample)));
+document.getElementById('clear').addEventListener('click', () => { points = []; recompute(); });
+load('twoCircles');
+</script>
+</body>
+</html>
